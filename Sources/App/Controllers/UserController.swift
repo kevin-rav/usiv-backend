@@ -19,6 +19,8 @@ struct UserController: RouteCollection {
         let passwordProtected = usersRoute.grouped(User.authenticator())
         passwordProtected.post("login", use: login)
 
+        passwordProtected.put("registerDeviceToken", use: registerDeviceToken)
+
     }
 
     func index(req: Request) throws -> EventLoopFuture<[User]> {
@@ -44,6 +46,36 @@ struct UserController: RouteCollection {
     func login(req: Request) throws -> User {
         try req.auth.require(User.self)
     }
+
+    func registerDeviceToken(req: Request) throws -> EventLoopFuture<User> {
+        // Log the authenticated user
+        if let user = try? req.auth.require(User.self) {
+            print("Authenticated user: \(user)")
+        } else {
+            print("User authentication failed")
+        }
+        
+        // Decode the device token from the request body
+        let deviceTokenData = try req.content.decode(DeviceTokenData.self)
+        
+        // Update the user's device token field with the received token
+        if var user = try? req.auth.require(User.self) {
+            user.deviceToken = deviceTokenData.token
+            
+            // Save the updated user to the database
+            return user.save(on: req.db)
+                .map { user }
+                .flatMapErrorThrowing { error in
+                    // Handle database errors
+                    print("Failed to save user: \(error)")
+                    throw error
+                }
+        } else {
+            throw Abort(.unauthorized)
+        }
+    }
+
+
 
 }
  

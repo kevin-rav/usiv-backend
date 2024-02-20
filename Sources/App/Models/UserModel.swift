@@ -20,6 +20,7 @@ final class User: Model, Content {
     @Field(key: "password") var password: String
 
     @Field(key: "role") var role: Int
+    @Field(key: "deviceToken") var deviceToken: String?
     
     /// Initializes a new instance of the User class.
     init() { }
@@ -29,11 +30,12 @@ final class User: Model, Content {
     ///   - id: The unique identifier of the user.
     ///   - userName: The username of the user.
     ///   - password: The password of the user.
-    init(id: UUID? = nil, userName: String, password: String, role: Int) {
+    init(id: UUID? = nil, userName: String, password: String, role: Int, deviceToken: String? = nil) {
         self.id = id
         self.userName = userName
         self.password = password
         self.role = role
+        self.deviceToken = deviceToken
     }
 }
 
@@ -80,6 +82,3 @@ extension User: ModelAuthenticatable {
         try Bcrypt.verify(password, created: self.password)
     }
 }
-
-
-

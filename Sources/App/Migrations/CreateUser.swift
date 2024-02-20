@@ -17,6 +17,7 @@ struct CreateUser: Migration {
             .field("userName", .string, .required)
             .field("password", .string, .required)
             .field("role", .int, .required)
+            .field("deviceToken", .string) 
             .unique(on: "userName")
             .create()
     }

@@ -48,25 +48,54 @@ struct USIVRequestController: RouteCollection {
 
         POST request /requests route
     */ 
-    func create(req: Request) throws -> EventLoopFuture<USIVRequest> {
-        // Fetch the authenticated user
-        let user = try req.auth.require(User.self)
-        
-        // Decode the request content
-        let request = try req.content.decode(USIVRequest.Create.self)
-        
-        let requestModel = USIVRequest(
-            hospital: request.hospital,
-            roomNumber: request.roomNumber,
-            callBackNumber: request.callBackNumber,
-            notes: request.notes,
-            status: 0, 
-            userPosted: user.id!
-        )
-        
-        // Save the request to the database
-        return requestModel.save(on: req.db).map { requestModel }
+func create(req: Request) throws -> EventLoopFuture<USIVRequest> {
+    // Fetch the authenticated user
+    let user = try req.auth.require(User.self)
+    
+    // Decode the request content
+    let request = try req.content.decode(USIVRequest.Create.self)
+    
+    let requestModel = USIVRequest(
+        hospital: request.hospital,
+        roomNumber: request.roomNumber,
+        callBackNumber: request.callBackNumber,
+        notes: request.notes,
+        status: 0,
+        userPosted: user.id!
+    )
+    
+    // Save the request to the database
+    return requestModel.save(on: req.db).flatMap { savedRequest in
+        // Fetch users with role 1
+        return User.query(on: req.db)
+            .filter(\.$role == 1)
+            .all()
+            .flatMap { users in
+                // Send notifications to each user
+                let notifications = users.map { user in
+                    sendNotification(req: req, user: user)
+                }
+                // Return the saved request after sending all notifications
+                return EventLoopFuture.whenAllComplete(notifications, on: req.eventLoop)
+                    .map { _ in savedRequest }
+            }
     }
+}
+
+func sendNotification(req: Request, user: User) -> EventLoopFuture<Void> {
+    // Safely unwrap the device token
+    guard let dt = user.deviceToken else {
+        let userId = user.id ?? UUID()
+        // Return a failed future if the device token is missing
+        return req.eventLoop.makeFailedFuture(Abort(.internalServerError, reason: "Device token is missing for user \(userId)"))
+    }
+    
+    // Create push notification payload
+    let payload: [String: Codable] = ["acme1": "hey", "acme2": 2]
+    
+    // Send the notification
+    return req.apns.client.send(.init(alertBody: "Test Notification", sound: "default"), to: dt, payload: payload)
+}
 
     /** 
         Function to fetch requests with status 0 (available)
