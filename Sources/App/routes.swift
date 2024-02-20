@@ -65,7 +65,7 @@ func routes(_ app: Application) throws {
                 if let roomConnections = allSockets[requestUUID] {
                     roomConnections.forEach { socket in
                         if socket.id != socketConnection.id {
-                            socket.ws.send(text)
+                            socket.ws.send("\(userName): \(text)")
                             print("message Sent")
                         }
                     }

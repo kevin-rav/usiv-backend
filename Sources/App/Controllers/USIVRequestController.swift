@@ -7,6 +7,14 @@
 
 import Fluent
 import Vapor
+import APNS
+import APNSCore
+import VaporAPNS
+
+struct Payload: Codable {
+    let acme1: String
+    let acme2: Int
+}
 
 struct USIVRequestController: RouteCollection {
     func boot(routes: RoutesBuilder) throws {
@@ -31,6 +39,10 @@ struct USIVRequestController: RouteCollection {
         // to delete a request
         passwordProtected.delete(":requestID", use: deleteRequest)
 
+        requests.get("sendNotificationToResponders") { req async throws -> HTTPStatus in
+            try await sendNotificationToUsersWithRole1(req: req)
+        }
+
     }
     
     /** 
@@ -48,54 +60,58 @@ struct USIVRequestController: RouteCollection {
 
         POST request /requests route
     */ 
-func create(req: Request) throws -> EventLoopFuture<USIVRequest> {
-    // Fetch the authenticated user
-    let user = try req.auth.require(User.self)
-    
-    // Decode the request content
-    let request = try req.content.decode(USIVRequest.Create.self)
-    
-    let requestModel = USIVRequest(
-        hospital: request.hospital,
-        roomNumber: request.roomNumber,
-        callBackNumber: request.callBackNumber,
-        notes: request.notes,
-        status: 0,
-        userPosted: user.id!
-    )
-    
-    // Save the request to the database
-    return requestModel.save(on: req.db).flatMap { savedRequest in
-        // Fetch users with role 1
-        return User.query(on: req.db)
+    func create(req: Request) throws -> EventLoopFuture<USIVRequest> {
+        // Fetch the authenticated user
+        let user = try req.auth.require(User.self)
+        
+        // Decode the request content
+        let request = try req.content.decode(USIVRequest.Create.self)
+        
+        let requestModel = USIVRequest(
+            hospital: request.hospital,
+            roomNumber: request.roomNumber,
+            callBackNumber: request.callBackNumber,
+            notes: request.notes,
+            status: 0, 
+            userPosted: user.id!
+        )
+        
+        // Save the request to the database
+        return requestModel.save(on: req.db).map { requestModel }
+    }
+
+    func sendNotificationToUsersWithRole1(req: Request) async throws -> HTTPStatus {
+        // Fetch users with role 1 from your database
+        let usersWithRole1 = try await User.query(on: req.db)
             .filter(\.$role == 1)
             .all()
-            .flatMap { users in
-                // Send notifications to each user
-                let notifications = users.map { user in
-                    sendNotification(req: req, user: user)
-                }
-                // Return the saved request after sending all notifications
-                return EventLoopFuture.whenAllComplete(notifications, on: req.eventLoop)
-                    .map { _ in savedRequest }
-            }
-    }
-}
 
-func sendNotification(req: Request, user: User) -> EventLoopFuture<Void> {
-    // Safely unwrap the device token
-    guard let dt = user.deviceToken else {
-        let userId = user.id ?? UUID()
-        // Return a failed future if the device token is missing
-        return req.eventLoop.makeFailedFuture(Abort(.internalServerError, reason: "Device token is missing for user \(userId)"))
+        // Extract device tokens for users with role 1
+        let deviceTokens = usersWithRole1.compactMap { $0.deviceToken }
+
+        // Create push notification payload
+        let payload = Payload(acme1: "hey", acme2: 2)
+        let alert = APNSAlertNotification(
+            alert: .init(
+                title: .raw("Hello"),
+                subtitle: .raw("This is a test from vapor/apns")
+            ),
+            expiration: .immediately,
+            priority: .immediately,
+            topic: "com.hillbllc.OSUUSIVApp",
+            payload: payload
+        )
+
+        // Send the notification to each device token
+        for deviceToken in deviceTokens {
+            try await req.apns.client.sendAlertNotification(
+                alert,
+                deviceToken: deviceToken
+            )
+        }
+
+        return .ok
     }
-    
-    // Create push notification payload
-    let payload: [String: Codable] = ["acme1": "hey", "acme2": 2]
-    
-    // Send the notification
-    return req.apns.client.send(.init(alertBody: "Test Notification", sound: "default"), to: dt, payload: payload)
-}
 
     /** 
         Function to fetch requests with status 0 (available)
